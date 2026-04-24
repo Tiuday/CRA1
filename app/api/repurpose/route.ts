@@ -8,6 +8,12 @@ function err(message: string, status: number) {
 }
 
 export async function POST(request: NextRequest) {
+  // ── Diagnostic: confirm API key is loaded ────────────────────────────────
+  console.log(
+    "[repurpose] API key check:",
+    process.env.ANTHROPIC_API_KEY?.slice(0, 8) ?? "MISSING"
+  );
+
   // ── 1. Parse + validate body ──────────────────────────────────────────────
   let body: Record<string, unknown>;
   try {
@@ -31,15 +37,12 @@ export async function POST(request: NextRequest) {
   }
 
   if (!PLATFORMS.includes(platform as Platform)) {
-    return err(
-      `platform must be one of: ${PLATFORMS.join(", ")}.`,
-      400
-    );
+    return err(`platform must be one of: ${PLATFORMS.join(", ")}.`, 400);
   }
 
   const validPlatform = platform as Platform;
 
-  // ── 3. Call Anthropic ─────────────────────────────────────────────────────
+  // ── 2. Call Anthropic ─────────────────────────────────────────────────────
   try {
     const anthropic = createAnthropicClient();
     const prompt = AGENT_PROMPTS[validPlatform](content.trim());
@@ -50,9 +53,9 @@ export async function POST(request: NextRequest) {
       messages: [{ role: "user", content: prompt }],
     });
 
-    const result = message.content
-      .filter((block): block is Anthropic.TextBlock => block.type === "text")
-      .map((block) => block.text)
+    // Safe parsing: map every block, take .text if present, join
+    const result = (message.content as Array<{ type: string; text?: string }>)
+      .map((b) => b.text || "")
       .join("")
       .trim();
 
@@ -60,15 +63,13 @@ export async function POST(request: NextRequest) {
       return err("The AI returned an empty response. Please try again.", 500);
     }
 
+    console.log("[repurpose] API response received:", result.slice(0, 50));
+
     return NextResponse.json({ result });
   } catch (error: unknown) {
-    // Anthropic SDK typed errors
     if (error instanceof Anthropic.APIError) {
       if (error.status === 429) {
-        return err(
-          "Rate limit reached — please wait a moment and try again.",
-          429
-        );
+        return err("Rate limit reached — please wait a moment and try again.", 429);
       }
       if (error.status === 401) {
         console.error("[repurpose] Anthropic auth error — check API key");
@@ -86,7 +87,6 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Block all other HTTP methods
 export async function GET() {
   return err("Method not allowed.", 405);
 }

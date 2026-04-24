@@ -51,19 +51,24 @@ export default function AgentInterface() {
     setAppState("running");
 
     // Initialise all nodes as waiting
-    let current: PlatformResult[] = PLATFORMS.map((p) => ({
+    const initial: PlatformResult[] = PLATFORMS.map((p) => ({
       platform: p,
       status: "waiting",
       content: "",
     }));
-    setResults([...current]);
+    setResults(initial);
+
+    // Local copy so we can read back state without stale closure issues
+    let current = [...initial];
 
     for (const platform of PLATFORMS) {
       // Mark this platform as running
       current = current.map((r) =>
         r.platform === platform ? { ...r, status: "running" } : r
       );
-      setResults([...current]);
+      setResults((prev) => prev.map((r) =>
+        r.platform === platform ? { ...r, status: "running" } : r
+      ));
 
       try {
         const res = await fetch("/api/repurpose", {
@@ -78,19 +83,21 @@ export default function AgentInterface() {
           throw new Error(data.error ?? "Generation failed");
         }
 
+        const text = data.result;
         current = current.map((r) =>
-          r.platform === platform
-            ? { ...r, status: "done", content: data.result! }
-            : r
+          r.platform === platform ? { ...r, status: "done", content: text } : r
         );
+        setResults((prev) => prev.map((r) =>
+          r.platform === platform ? { ...r, status: "done", content: text } : r
+        ));
       } catch {
-        // Mark as error, continue to next platform
         current = current.map((r) =>
           r.platform === platform ? { ...r, status: "error" } : r
         );
+        setResults((prev) => prev.map((r) =>
+          r.platform === platform ? { ...r, status: "error" } : r
+        ));
       }
-
-      setResults([...current]);
     }
 
     setAppState("done");
