@@ -72,8 +72,8 @@ export async function POST(request: NextRequest) {
         return err("Rate limit reached — please wait a moment and try again.", 429);
       }
       if (error.status === 401) {
-        console.error("[repurpose] Anthropic auth error — check API key");
-        return err("AI service configuration error.", 500);
+        console.error("[repurpose] Anthropic 401 — API key invalid or missing");
+        return err("AI service configuration error. Check your ANTHROPIC_API_KEY.", 401);
       }
       if (error.status === 529) {
         return err("Claude is currently overloaded. Please try again shortly.", 503);

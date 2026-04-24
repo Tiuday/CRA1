@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Platform } from "./types";
 
-export const MODEL = "claude-sonnet-4-20250514";
+export const MODEL = "claude-sonnet-4-6";
 
 export function createAnthropicClient() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });

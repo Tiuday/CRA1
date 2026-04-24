@@ -32,6 +32,20 @@ The question is no longer whether AI can help your business. It's whether you're
 
 type AppState = "idle" | "running" | "done";
 
+// Errors that indicate the whole run is broken (not just one platform)
+const FATAL_PHRASES = [
+  "configuration error",
+  "api key",
+  "authentication",
+  "overloaded",
+  "rate limit",
+];
+
+function isFatal(msg: string) {
+  const lower = msg.toLowerCase();
+  return FATAL_PHRASES.some((p) => lower.includes(p));
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_CHARS = 10_000;
@@ -42,6 +56,7 @@ export default function AgentInterface() {
   const [content, setContent] = useState("");
   const [appState, setAppState] = useState<AppState>("idle");
   const [results, setResults] = useState<PlatformResult[]>([]);
+  const [runError, setRunError] = useState<string | null>(null);
 
   // ── Run agent ───────────────────────────────────────────────────────────────
   async function runAgent() {
@@ -49,26 +64,40 @@ export default function AgentInterface() {
     if (!trimmed || appState === "running") return;
 
     setAppState("running");
+    setRunError(null);
 
-    // Initialise all nodes as waiting
     const initial: PlatformResult[] = PLATFORMS.map((p) => ({
       platform: p,
       status: "waiting",
       content: "",
     }));
     setResults(initial);
-
-    // Local copy so we can read back state without stale closure issues
     let current = [...initial];
 
+    let aborted = false;
+
     for (const platform of PLATFORMS) {
-      // Mark this platform as running
+      // If a fatal error occurred, mark remaining platforms as error instantly
+      if (aborted) {
+        current = current.map((r) =>
+          r.platform === platform ? { ...r, status: "error" } : r
+        );
+        setResults((prev) =>
+          prev.map((r) =>
+            r.platform === platform ? { ...r, status: "error" } : r
+          )
+        );
+        continue;
+      }
+
       current = current.map((r) =>
         r.platform === platform ? { ...r, status: "running" } : r
       );
-      setResults((prev) => prev.map((r) =>
-        r.platform === platform ? { ...r, status: "running" } : r
-      ));
+      setResults((prev) =>
+        prev.map((r) =>
+          r.platform === platform ? { ...r, status: "running" } : r
+        )
+      );
 
       try {
         const res = await fetch("/api/repurpose", {
@@ -80,23 +109,33 @@ export default function AgentInterface() {
         const data: { result?: string; error?: string } = await res.json();
 
         if (!res.ok || !data.result) {
-          throw new Error(data.error ?? "Generation failed");
+          throw new Error(data.error ?? `HTTP ${res.status}`);
         }
 
         const text = data.result;
         current = current.map((r) =>
           r.platform === platform ? { ...r, status: "done", content: text } : r
         );
-        setResults((prev) => prev.map((r) =>
-          r.platform === platform ? { ...r, status: "done", content: text } : r
-        ));
-      } catch {
+        setResults((prev) =>
+          prev.map((r) =>
+            r.platform === platform
+              ? { ...r, status: "done", content: text }
+              : r
+          )
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Generation failed";
         current = current.map((r) =>
           r.platform === platform ? { ...r, status: "error" } : r
         );
-        setResults((prev) => prev.map((r) =>
-          r.platform === platform ? { ...r, status: "error" } : r
-        ));
+        setResults((prev) =>
+          prev.map((r) =>
+            r.platform === platform ? { ...r, status: "error" } : r
+          )
+        );
+        // Only store first error; abort remaining if it's a systemic failure
+        setRunError((prev) => prev ?? msg);
+        if (isFatal(msg)) aborted = true;
       }
     }
 
@@ -108,11 +147,10 @@ export default function AgentInterface() {
     setContent("");
     setResults([]);
     setAppState("idle");
+    setRunError(null);
   }
 
-  const doneResults = results.filter(
-    (r) => r.status === "done" && r.content
-  );
+  const doneResults = results.filter((r) => r.status === "done" && r.content);
   const charOver = content.length > MAX_CHARS;
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -258,12 +296,27 @@ export default function AgentInterface() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ duration: 0.3 }}
-            className="space-y-8"
+            className="space-y-6"
           >
             {/* Pipeline in done state */}
             <div className="p-6 rounded-xl border border-surface-border bg-surface-2">
               <LoadingPipeline results={results} />
             </div>
+
+            {/* Error banner */}
+            {runError && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.25 }}
+                className="px-5 py-4 rounded-xl border border-red-900/40 bg-red-950/15 space-y-1"
+              >
+                <p className="font-mono text-xs text-red-500 tracking-widest">
+                  ERROR
+                </p>
+                <p className="font-mono text-sm text-red-300/80">{runError}</p>
+              </motion.div>
+            )}
 
             {/* Output cards — staggered */}
             {doneResults.length > 0 && (
