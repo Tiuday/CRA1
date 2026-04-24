@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import { createClient } from "@/lib/supabase/server";
 import { createAnthropicClient, AGENT_PROMPTS, MODEL } from "@/lib/anthropic";
 import { PLATFORMS, type Platform } from "@/lib/types";
 
@@ -9,17 +8,7 @@ function err(message: string, status: number) {
 }
 
 export async function POST(request: NextRequest) {
-  // ── 1. Auth gate ─────────────────────────────────────────────────────────
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return err("Unauthorized — please sign in.", 401);
-  }
-
-  // ── 2. Parse + validate body ──────────────────────────────────────────────
+  // ── 1. Parse + validate body ──────────────────────────────────────────────
   let body: Record<string, unknown>;
   try {
     body = await request.json();

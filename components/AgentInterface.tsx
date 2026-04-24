@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { createClient } from "@/lib/supabase/client";
 import Button from "@/components/ui/Button";
 import LoadingPipeline from "@/components/ui/LoadingPipeline";
 import OutputCard from "@/components/ui/OutputCard";
@@ -43,18 +42,12 @@ export default function AgentInterface() {
   const [content, setContent] = useState("");
   const [appState, setAppState] = useState<AppState>("idle");
   const [results, setResults] = useState<PlatformResult[]>([]);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const supabase = useRef(createClient()).current;
 
   // ── Run agent ───────────────────────────────────────────────────────────────
   async function runAgent() {
     const trimmed = content.trim();
     if (!trimmed || appState === "running") return;
 
-    setSaved(false);
-    setSaveError(null);
     setAppState("running");
 
     // Initialise all nodes as waiting
@@ -103,58 +96,11 @@ export default function AgentInterface() {
     setAppState("done");
   }
 
-  // ── Save to history ─────────────────────────────────────────────────────────
-  async function saveToHistory() {
-    if (saving || saved) return;
-    setSaveError(null);
-    setSaving(true);
-
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not authenticated");
-
-      const { data: job, error: jobErr } = await supabase
-        .from("repurpose_jobs")
-        .insert({
-          user_id: user.id,
-          original_content: content.trim(),
-          status: "done",
-        })
-        .select()
-        .single();
-
-      if (jobErr) throw jobErr;
-
-      const outputs = results
-        .filter((r) => r.status === "done" && r.content)
-        .map((r) => ({ job_id: job.id, platform: r.platform, content: r.content }));
-
-      if (outputs.length > 0) {
-        const { error: outErr } = await supabase
-          .from("repurpose_outputs")
-          .insert(outputs);
-        if (outErr) throw outErr;
-      }
-
-      setSaved(true);
-    } catch (err) {
-      setSaveError(
-        err instanceof Error ? err.message : "Failed to save. Try again."
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-
   // ── Reset ───────────────────────────────────────────────────────────────────
   function reset() {
     setContent("");
     setResults([]);
     setAppState("idle");
-    setSaved(false);
-    setSaveError(null);
   }
 
   const doneResults = results.filter(
@@ -326,43 +272,11 @@ export default function AgentInterface() {
               </div>
             )}
 
-            {/* Save error */}
-            <AnimatePresence>
-              {saveError && (
-                <motion.p
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  className="font-mono text-xs text-red-400 bg-red-950/25 border border-red-900/35 rounded-lg px-4 py-3"
-                >
-                  {saveError}
-                </motion.p>
-              )}
-            </AnimatePresence>
-
             {/* Actions */}
             <div className="flex gap-3 flex-wrap items-center">
-              <Button
-                onClick={saveToHistory}
-                loading={saving}
-                disabled={saved || doneResults.length === 0}
-                variant={saved ? "ghost" : "primary"}
-                size="lg"
-              >
-                {saved ? "✓ SAVED" : "SAVE TO HISTORY"}
-              </Button>
               <Button variant="ghost" size="lg" onClick={reset}>
                 RUN AGAIN
               </Button>
-              {saved && (
-                <motion.span
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="font-mono text-xs text-emerald-400"
-                >
-                  Saved to your history
-                </motion.span>
-              )}
             </div>
           </motion.div>
         )}
