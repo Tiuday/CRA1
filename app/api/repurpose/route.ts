@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
-import { createAnthropicClient, AGENT_PROMPTS, MODEL } from "@/lib/anthropic";
+import { generateContent, AGENT_PROMPTS } from "@/lib/anthropic";
 import { PLATFORMS, type Platform } from "@/lib/types";
 
 function err(message: string, status: number) {
@@ -8,13 +7,6 @@ function err(message: string, status: number) {
 }
 
 export async function POST(request: NextRequest) {
-  // ── Diagnostic: confirm API key is loaded ────────────────────────────────
-  console.log(
-    "[repurpose] API key check:",
-    process.env.ANTHROPIC_API_KEY?.slice(0, 8) ?? "MISSING"
-  );
-
-  // ── 1. Parse + validate body ──────────────────────────────────────────────
   let body: Record<string, unknown>;
   try {
     body = await request.json();
@@ -42,48 +34,20 @@ export async function POST(request: NextRequest) {
 
   const validPlatform = platform as Platform;
 
-  // ── 2. Call Anthropic ─────────────────────────────────────────────────────
   try {
-    const anthropic = createAnthropicClient();
     const prompt = AGENT_PROMPTS[validPlatform](content.trim());
-
-    const message = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 1024,
-      messages: [{ role: "user", content: prompt }],
-    });
-
-    // Safe parsing: map every block, take .text if present, join
-    const result = (message.content as Array<{ type: string; text?: string }>)
-      .map((b) => b.text || "")
-      .join("")
-      .trim();
-
-    if (!result) {
-      return err("The AI returned an empty response. Please try again.", 500);
-    }
-
-    console.log("[repurpose] API response received:", result.slice(0, 50));
-
+    const result = await generateContent(prompt);
+    console.log("[repurpose] success:", result.slice(0, 60));
     return NextResponse.json({ result });
   } catch (error: unknown) {
-    if (error instanceof Anthropic.APIError) {
-      if (error.status === 429) {
-        return err("Rate limit reached — please wait a moment and try again.", 429);
-      }
-      if (error.status === 401) {
-        console.error("[repurpose] Anthropic 401 — API key invalid or missing");
-        return err("AI service configuration error. Check your ANTHROPIC_API_KEY.", 401);
-      }
-      if (error.status === 529) {
-        return err("Claude is currently overloaded. Please try again shortly.", 503);
-      }
-      console.error(`[repurpose] Anthropic APIError ${error.status}:`, error.message);
-      return err("AI generation failed. Please try again.", 500);
-    }
+    const e = error as { status?: number; message?: string };
+    console.error("[repurpose] error:", e.status, e.message);
 
-    console.error("[repurpose] Unexpected error:", error);
-    return err("An unexpected error occurred.", 500);
+    if (e.status === 429) return err("Rate limit reached. Wait a moment and try again.", 429);
+    if (e.status === 401) return err("OpenRouter API key is missing or invalid.", 401);
+    if (e.status === 402) return err("OpenRouter account has no credits.", 402);
+
+    return err(`Generation failed: ${e.message ?? "unknown error"}`, 500);
   }
 }
 

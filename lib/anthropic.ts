@@ -1,10 +1,62 @@
-import Anthropic from "@anthropic-ai/sdk";
 import type { Platform } from "./types";
 
-export const MODEL = "claude-sonnet-4-6";
+// Free models with their required max_tokens.
+// Reasoning models (nvidia) need high limits because they burn tokens on internal thinking.
+const FREE_MODELS: { id: string; maxTokens: number }[] = [
+  { id: "google/gemma-4-31b-it:free",           maxTokens: 1024 },
+  { id: "liquid/lfm-2.5-1.2b-instruct:free",    maxTokens: 1024 },
+  { id: "nvidia/nemotron-3-nano-30b-a3b:free",   maxTokens: 3000 },
+];
 
-export function createAnthropicClient() {
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
+async function callOpenRouter(model: string, maxTokens: number, prompt: string): Promise<string> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw Object.assign(new Error("OPENROUTER_API_KEY is not set"), { status: 401 });
+
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:3000",
+      "X-Title": "Content Repurposing Agent",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: maxTokens,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw Object.assign(new Error(body), { status: res.status });
+  }
+
+  const data = await res.json();
+  const text: string = data.choices?.[0]?.message?.content?.trim() ?? "";
+  if (!text) throw Object.assign(new Error(`Model ${model} returned empty content`), { status: 500 });
+  return text;
+}
+
+export async function generateContent(prompt: string): Promise<string> {
+  let lastError: unknown;
+  for (const { id, maxTokens } of FREE_MODELS) {
+    try {
+      console.log("[ai] trying:", id);
+      const result = await callOpenRouter(id, maxTokens, prompt);
+      console.log("[ai] success:", id);
+      return result;
+    } catch (e) {
+      const err = e as { status?: number; message?: string };
+      if (err.status === 429) {
+        console.warn("[ai] rate-limited:", id, "— trying next");
+        lastError = e;
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastError ?? new Error("All models rate-limited. Try again in a minute.");
 }
 
 export const AGENT_PROMPTS = {
